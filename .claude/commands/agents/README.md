@@ -20,10 +20,17 @@ Each stage is handled by a specialized agent with specific expertise and respons
 **Responsibilities**:
 - Clarify what technique the user wants
 - Search repository for existing implementations
+- **Research external sources** (GitHub PRs, papers, docs)
 - Review submissions and PRs
 - Document theoretical background
 - Assess feasibility
 - Provide code examples and hyperparameters
+
+**Key Features**:
+- **GitHub MCP Integration**: Can fetch and analyze PRs from openai/parameter-golf
+- **Research Papers**: Can extract information from provided papers (arXiv links, PDFs)
+- **Documentation**: Can read external docs, blog posts, guides
+- **Cross-referencing**: Combines local and external sources for best approach
 
 **Output**: Comprehensive research summary with recommendations
 
@@ -39,19 +46,43 @@ Each stage is handled by a specialized agent with specific expertise and respons
 
 **Output**: Detailed implementation plan with code snippets
 
-### 3. `verifier.md` - Implementation Verifier ✅
+### 3. `implementer.md` - Code Implementer 💻
+**Purpose**: Make the actual code changes incrementally and safely
+
+**Responsibilities**:
+- Review and understand the implementation plan
+- Implement changes one at a time
+- Test after each change (syntax, imports, basic functionality)
+- Debug and fix errors immediately
+- Document changes as they're made
+- Prepare code for verification
+
+**Key Features**:
+- **Incremental implementation**: Change → Test → Repeat
+- **Immediate error handling**: Fix issues before proceeding
+- **Style matching**: Follow existing code conventions
+- **Clean up**: Remove debug code before finishing
+
+**Output**: Implementation summary with test results
+
+### 4. `verifier.md` - Implementation Verifier ✅
 **Purpose**: Confirm the implementation works correctly
 
 **Responsibilities**:
-- Level 1: Syntax validation
+- Level 1: Syntax validation (improved `py_compile` usage)
 - Level 2: Smoke test (5 iterations)
 - Level 3: Feature verification (CRITICAL - confirm technique is active)
 - Level 4: Performance check (memory, speed)
 - Report findings with evidence
 
+**Key Features**:
+- **Enhanced syntax check**: Properly uses `python -m py_compile` with error checking
+- **Multiple verification strategies**: Logging, hooks, architecture inspection
+- **Evidence-based**: Provides proof that technique is actually enabled
+
 **Output**: Verification report with pass/fail for each level
 
-### 4. `reviewer.md` - Implementation Reviewer 🔍
+### 5. `reviewer.md` - Implementation Reviewer 🔍
 **Purpose**: Comprehensive final review before production
 
 **Responsibilities**:
@@ -90,7 +121,7 @@ Use the `/parameter-golf-agent` skill which orchestrates these agents:
 ```markdown
 1. Read agents/researcher.md and execute research
 2. Read agents/planner.md and create implementation plan
-3. Follow plan to implement (or guide user)
+3. Read agents/implementer.md and implement code changes
 4. Read agents/verifier.md and run verification tests
 5. Read agents/reviewer.md and conduct final review
 ```
@@ -99,6 +130,26 @@ Use the `/parameter-golf-agent` skill which orchestrates these agents:
 
 ### 🎯 Systematic Approach
 Each agent has a clear role and produces structured output that feeds the next stage.
+
+### 🔬 External Source Integration (NEW)
+The researcher can now work with external sources:
+- **GitHub PRs**: Fetch and analyze PRs from openai/parameter-golf via GitHub MCP
+- **Research Papers**: Extract techniques from papers (arXiv, PDFs)
+- **Documentation**: Read external docs, blog posts, implementation guides
+- **Combined Research**: Cross-reference external sources with local implementations
+
+### 💻 Dedicated Implementation Agent (NEW)
+The new implementer agent provides:
+- **Incremental changes**: One modification at a time with immediate testing
+- **Error handling**: Fixes issues before proceeding
+- **Style matching**: Follows existing code conventions
+- **Clean implementation**: Removes debug code, matches patterns
+
+### 🔍 Enhanced Verification (IMPROVED)
+The verifier now includes:
+- **Better syntax checking**: Proper `py_compile` usage with error codes
+- **Multiple verification strategies**: Logging, hooks, architecture inspection
+- **Evidence-based confirmation**: Proves technique is actually enabled
 
 ### 🔍 Critical Verification
 The verifier specifically checks that techniques are **actually enabled**, not just present in code. This catches the common issue where code runs fine but the technique is silently disabled.
@@ -156,6 +207,9 @@ Stage 5: Review
 - Cite all sources (submissions, PRs, papers)
 - Quantify expected impact with evidence
 - Be honest about uncertainty
+- **Use GitHub MCP** when user mentions PRs
+- **Extract key info** from papers when provided
+- **Cross-reference** external and local sources
 
 ### For Planners
 - Make minimal, focused changes
@@ -163,11 +217,20 @@ Stage 5: Review
 - Plan verification at each step
 - Consider compatibility issues
 
+### For Implementers
+- **Implement one change at a time**
+- **Test after each change** (syntax, imports, basic tests)
+- Match existing code style
+- Fix errors immediately before proceeding
+- Clean up debug code
+- Document changes as you go
+
 ### For Verifiers
 - Run all levels in order
 - **Critical**: Verify technique is actually active (Level 3)
 - Provide clear evidence
 - Don't skip tests
+- Use proper `py_compile` syntax checking
 
 ### For Reviewers
 - Be thorough - this is the final gate

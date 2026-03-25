@@ -42,6 +42,107 @@ Use these search strategies:
 3. **Check recent PRs** on openai/parameter-golf (use GitHub MCP if available)
 4. **Search for papers** mentioned in READMEs (arXiv IDs, paper titles)
 
+### Step 3.1: Research External Sources (When Provided)
+
+When the user provides external sources, prioritize these over local repository search:
+
+#### GitHub MCP Integration
+
+If the user mentions a specific PR or asks to research PRs:
+
+```bash
+# List recent PRs from openai/parameter-golf
+Use GitHub MCP tool: mcp__github-mcp-server__list_pull_requests
+  owner: "openai"
+  repo: "parameter-golf"
+  state: "all"
+  sort: "updated"
+  per_page: 20
+
+# Get specific PR details
+Use GitHub MCP tool: mcp__github-mcp-server__pull_request_read
+  method: "get"
+  owner: "openai"
+  repo: "parameter-golf"
+  pullNumber: <PR_NUMBER>
+
+# Get PR diff to see code changes
+Use GitHub MCP tool: mcp__github-mcp-server__pull_request_read
+  method: "get_diff"
+  owner: "openai"
+  repo: "parameter-golf"
+  pullNumber: <PR_NUMBER>
+
+# Get PR comments for additional context
+Use GitHub MCP tool: mcp__github-mcp-server__pull_request_read
+  method: "get_comments"
+  owner: "openai"
+  repo: "parameter-golf"
+  pullNumber: <PR_NUMBER>
+```
+
+**Example user requests**:
+- "Use technique from PR #123"
+- "Implement the approach from the latest PR"
+- "Check what the top PRs are doing"
+
+#### Research Papers
+
+If the user provides a research paper (arXiv link, PDF, or paper title):
+
+1. **Read the paper** (if provided as file or accessible)
+2. **Extract key information**:
+   - Algorithm/technique name
+   - Core mechanism
+   - Claimed improvements
+   - Hyperparameters mentioned
+3. **Search for existing implementations**:
+   - Check if paper is mentioned in submission READMEs
+   - Search for paper arXiv ID in codebase
+   - Look for author names or technique names
+
+**Example user requests**:
+- "Implement technique from paper X (arXiv:1234.5678)"
+- "Use the method described in this PDF"
+- "Apply the algorithm from the Attention is All You Need paper"
+
+#### Documentation and External Resources
+
+If the user provides documentation, blog posts, or other resources:
+
+1. **Read and understand** the provided resource
+2. **Extract implementation details**:
+   - Code snippets if provided
+   - Hyperparameter recommendations
+   - Known issues or gotchas
+3. **Cross-reference** with local implementations
+4. **Document source** in research output
+
+**Example user requests**:
+- "Implement based on this blog post: [URL]"
+- "Use the approach from the PyTorch docs"
+- "Follow this implementation guide"
+
+### Step 3.2: Combining Local and External Research
+
+When both local implementations and external sources are available:
+
+1. **Prioritize external sources** if explicitly provided by user
+2. **Cross-reference** external approach with local implementations
+3. **Identify differences** between external and local versions
+4. **Recommend best approach**:
+   - Use external if it's proven superior
+   - Use local if it's already optimized for Parameter Golf
+   - Combine techniques if complementary
+
+**Output format**:
+```markdown
+### Research Sources
+- **External**: PR #123 from openai/parameter-golf
+- **Local**: 3 implementations in records/track_10min_16mb/
+- **Recommendation**: Use PR #123 approach, it's more recent and shows 0.002 BPB improvement
+```
+
 ### Step 4: Understand the Theory
 
 For each technique, document:

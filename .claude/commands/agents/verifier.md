@@ -22,17 +22,28 @@ Ensure code is syntactically correct.
 ```bash
 cd /home/runner/work/parameter-golf/parameter-golf
 
-# Check Python syntax
+# Check Python syntax - compiles to .pyc in __pycache__
 python -m py_compile train_gpt.py
+if [ $? -eq 0 ]; then
+    echo "✅ Syntax validation passed"
+else
+    echo "❌ Syntax errors found"
+    exit 1
+fi
 
-# Check imports and module loading
-python -c "import train_gpt; print('Imports OK')"
+# Check imports and module loading (may fail if dependencies missing, but syntax is still valid)
+python -c "import sys; sys.path.insert(0, '.'); import train_gpt; print('✅ Imports OK')" 2>&1
 
-# Verify help text works (shows hyperparameters are parsed)
-python train_gpt.py --help 2>&1 | head -5
+# Verify script can be executed (basic runtime check)
+python train_gpt.py --help 2>&1 | head -10
 ```
 
-**Pass criteria**: No syntax errors, imports succeed, script runs.
+**Pass criteria**:
+- `py_compile` exits with code 0 (no syntax errors)
+- Script can be imported without syntax errors (import errors for missing dependencies are OK at this stage)
+- Script runs without immediate crashes
+
+**Note**: `py_compile` only checks Python syntax, not semantic correctness. Import errors due to missing dependencies should not fail this level - that's checked in Level 2.
 
 ### Level 2: Smoke Test 🔥
 Run minimal training to catch immediate crashes.

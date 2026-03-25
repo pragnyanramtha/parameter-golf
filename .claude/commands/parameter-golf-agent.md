@@ -20,7 +20,7 @@ A comprehensive agent-driven system for implementing Parameter Golf techniques. 
 
 ## The Agent Workflow
 
-This skill follows a **5-stage agent workflow**:
+This skill follows a **6-stage agent workflow**:
 
 ```
 User Request
@@ -29,7 +29,7 @@ User Request
      ↓
 [2] PLAN → Design implementation strategy
      ↓
-[3] IMPLEMENT → Write the code  (you do this, or guide user)
+[3] IMPLEMENT → Write the code changes
      ↓
 [4] VERIFY → Test correctness
      ↓
@@ -165,48 +165,68 @@ return self.down(x)
 
 ## Stage 3: Implementation 💻
 
-**Agent**: You (Claude Code) or the User
-**Goal**: Make the planned changes to the code
+**Agent**: Code Implementer
+**Instructions**: `.claude/commands/agents/implementer.md`
+**Goal**: Make the planned code changes incrementally and safely
 
-### What Happens in Implementation
+### What the Implementer Does
 
-Based on the Planner's step-by-step instructions:
+1. **Reviews the plan** - Understands all proposed changes
+2. **Implements incrementally** - One change at a time, not all at once
+3. **Tests after each step** - Verifies syntax, imports, basic functionality
+4. **Handles errors** - Debugs and fixes issues immediately
+5. **Documents changes** - Tracks what was modified
+6. **Prepares for verification** - Ensures code is ready for testing
 
-1. **Make code changes** - Edit train_gpt.py following the plan
-2. **Add hyperparameters** - Include environment variables
-3. **Test incrementally** - Verify each change before proceeding
-4. **Handle errors** - Fix issues as they arise
-5. **Document changes** - Comment complex sections
+### Implementation Process
 
-### Implementation Guidelines
+The Implementer follows this workflow for each change:
 
-**If you're implementing (Claude Code)**:
-- Follow the plan precisely
-- Use the Edit tool for surgical changes
-- Test after each major change
-- Keep diffs small and focused
-- Don't refactor unrelated code
+1. **Read current code** - Understand what exists now
+2. **Make the change** - Use Edit tool for precise modifications
+3. **Test immediately** - Run syntax check, imports, basic tests
+4. **Fix if broken** - Don't proceed until this change works
+5. **Document** - Note what was changed and test results
+6. **Next change** - Repeat for next item in plan
 
-**If user is implementing**:
-- Provide the plan clearly
-- Offer code snippets they can copy
-- Guide them through each step
-- Help debug any issues
+### Implementation Output
 
-### During Implementation
+The Implementer provides:
+- **Summary of changes** - What was modified in each file
+- **Test results** - Syntax checks, import checks, basic functionality
+- **Files modified** - List of changed files
+- **Known issues** - Any problems encountered
+- **Status** - Ready for verification or needs attention
 
-- ✅ **Do**: Follow the plan, test frequently, ask questions if unclear
-- ❌ **Don't**: Skip steps, make unplanned changes, ignore errors
+### Key Principles
 
-### Implementation Checklist
+- **Incremental changes** - Never make multiple changes without testing
+- **Test immediately** - After each change, verify it works
+- **Match code style** - Follow existing conventions
+- **Minimal modifications** - Only change what's necessary
+- **Clean up** - Remove debug code before finishing
+
+### Example Implementation Output
 
 ```markdown
-- [ ] Make code changes from plan
-- [ ] Add/modify hyperparameters
-- [ ] Update imports if needed
-- [ ] Remove debug statements
-- [ ] Test basic syntax (python train_gpt.py --help)
-- [ ] Ready for verification
+## Implementation Summary: LeakyReLU²
+
+### Status
+✅ Complete - All changes implemented and tested
+
+### Changes Made
+
+#### 1. MLP Activation (train_gpt.py:147-149)
+- Replaced SwiGLU with LeakyReLU²
+- **Test**: ✅ Syntax OK, imports OK
+
+### Testing Results
+- Syntax Check: ✅ Pass (`python -m py_compile`)
+- Import Check: ✅ Pass
+- Forward Pass: ✅ Pass (dummy input works)
+
+### Ready for Verifier
+All changes complete and basic tests passing.
 ```
 
 ---
@@ -381,8 +401,8 @@ When user requests a technique implementation:
 
 3. **Implement Changes**
    ```
-   Following implementation plan step-by-step...
-   [You or user makes code changes]
+   Reading agents/implementer.md and implementing changes...
+   [Implementer makes code changes incrementally, tests after each step]
    ```
 
 4. **Verify Implementation**
