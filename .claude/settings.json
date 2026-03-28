@@ -1,0 +1,31 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(**)",
+      "Write(train_gpt.py)",
+      "Write(train_gpt_mlx.py)",
+      "Write(records/**)",
+      "Write(prs/**)",
+      "Write(.claude/**)",
+      "Write(requirements.txt)",
+      "Bash(python3:*)",
+      "Bash(python:*)",
+      "Bash(torchrun:*)",
+      "Bash(git:*)",
+      "Bash(grep:*)",
+      "Bash(wc:*)",
+      "Bash(find:*)",
+      "Bash(tail:*)",
+      "Bash(diff:*)",
+      "Bash(stat:*)",
+      "Bash(cat:*)"
+    ],
+    "deny": [
+      "Bash(curl:*)",
+      "Bash(wget:*)",
+      "Bash(pip install:*)",
+      "Write(data/**)"
+    ]
+  },
+  "includeCoAuthoredBy": true
+}
