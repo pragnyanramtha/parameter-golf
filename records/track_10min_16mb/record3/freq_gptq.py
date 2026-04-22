@@ -12,32 +12,6 @@ import triton.language as tl
 from triton.tools.tensor_descriptor import TensorDescriptor
 
 
-def _parse_loop_depth_list(raw_value):
-    raw_value = raw_value.strip()
-    if not raw_value:
-        return []
-    depths = []
-    for part in raw_value.split(","):
-        part = part.strip()
-        if not part:
-            continue
-        depths.append(int(part))
-    return depths
-
-
-def _parse_float_list(raw_value):
-    raw_value = raw_value.strip()
-    if not raw_value:
-        return []
-    vals = []
-    for part in raw_value.split(","):
-        part = part.strip()
-        if not part:
-            continue
-        vals.append(float(part))
-    return vals
-
-
 class Hyperparameters:
     data_dir = os.environ.get("DATA_DIR", "./data/")
     seed = int(os.environ.get("SEED", 1337))
@@ -72,29 +46,6 @@ class Hyperparameters:
     loop_start = int(os.environ.get("LOOP_START", 3))
     loop_end = int(os.environ.get("LOOP_END", 5))
     enable_looping_at = float(os.environ.get("ENABLE_LOOPING_AT", 0.35))
-    # Recurrence depth is expressed as the number of passes through the looped
-    # segment (so depth=3 corresponds to NUM_LOOPS=2). Training can optionally
-    # sample depths from a small precompiled set while eval stays fixed.
-    train_loop_min_depth = int(
-        os.environ.get("TRAIN_LOOP_MIN_DEPTH", str(num_loops + 1))
-    )
-    train_loop_max_depth = int(
-        os.environ.get("TRAIN_LOOP_MAX_DEPTH", str(num_loops + 1))
-    )
-    train_loop_depth_dist = os.environ.get("TRAIN_LOOP_DEPTH_DIST", "fixed").lower()
-    train_loop_depth_set = _parse_loop_depth_list(
-        os.environ.get("TRAIN_LOOP_DEPTH_SET", "")
-    )
-    train_loop_phase_depths = _parse_loop_depth_list(
-        os.environ.get("TRAIN_LOOP_PHASE_DEPTHS", "")
-    )
-    train_loop_phase_fractions = _parse_float_list(
-        os.environ.get("TRAIN_LOOP_PHASE_FRACTIONS", "")
-    )
-    train_loop_prewarm_depths = _parse_loop_depth_list(
-        os.environ.get("TRAIN_LOOP_PREWARM_DEPTHS", "")
-    )
-    eval_loop_depth = int(os.environ.get("EVAL_LOOP_DEPTH", str(num_loops + 1)))
     parallel_start_layer = int(os.environ.get("PARALLEL_START_LAYER", 8))
     parallel_final_lane = os.environ.get("PARALLEL_FINAL_LANE", "mean")
     min_lr = float(os.environ.get("MIN_LR", 0.0))
@@ -193,7 +144,7 @@ class Hyperparameters:
     # (fineweb_val_bytes_*.bin, identical shard layout to val_*.bin) and uses
     # it as the canonical raw-byte budget for BPB accounting. The sidecar
     # REPLACES the build_sentencepiece_luts byte-counting path entirely.
-    caseops_enabled = bool(int(os.environ.get("CASEOPS_ENABLED", "1")))
+    caseops_enabled = bool(int(os.environ.get("CASEOPS_ENABLED", "0")))
     _default_caseops_data = os.path.join(
         data_dir,
         "datasets",
@@ -223,9 +174,7 @@ class Hyperparameters:
             os.path.join(data_dir, "tokenizers", f"fineweb_{vocab_size}_bpe.model"),
         )
     train_files = os.path.join(datasets_dir, "fineweb_train_*.bin")
-    # Keep the validation-token glob disjoint from the byte-sidecar files
-    # (`fineweb_val_bytes_*.bin`) used by CaseOps scoring.
-    val_files = os.path.join(datasets_dir, "fineweb_val_[0-9][0-9][0-9][0-9][0-9][0-9].bin")
+    val_files = os.path.join(datasets_dir, "fineweb_val_*.bin")
     val_bytes_files = os.path.join(datasets_dir, "fineweb_val_bytes_*.bin")
     artifact_dir = os.environ.get("ARTIFACT_DIR", "")
     logfile = (
@@ -263,35 +212,6 @@ def log(msg, console=True):
         if _logger_hparams.logfile is not None:
             with open(_logger_hparams.logfile, "a", encoding="utf-8") as f:
                 print(msg, file=f)
-
-
-def _depth_to_repeats(depth):
-    return max(int(depth) - 1, 0)
-
-
-def _repeats_to_depth(repeats):
-    return max(int(repeats), 0) + 1
-
-
-def _loop_depth_weights(min_depth, max_depth, dist_name, center_depth):
-    depths = list(range(min_depth, max_depth + 1))
-    if not depths:
-        return [center_depth], [1]
-    if dist_name == "fixed" or min_depth == max_depth:
-        fixed_depth = min(max(center_depth, min_depth), max_depth)
-        return [fixed_depth], [1]
-    if dist_name == "uniform":
-        return depths, [1] * len(depths)
-    if dist_name in {"triangular", "bell"}:
-        center = min(max(center_depth, min_depth), max_depth)
-        weights = [
-            max_depth - min_depth + 1 - abs(depth - center)
-            for depth in depths
-        ]
-        return depths, weights
-    raise ValueError(
-        f"unsupported TRAIN_LOOP_DEPTH_DIST={dist_name!r}; expected fixed, uniform, or triangular"
-    )
 
 
 class ValidationData:
@@ -956,7 +876,6 @@ class Block(nn.Module):
 class GPT(nn.Module):
     def __init__(self, h):
         super().__init__()
-        self.h = h
         if h.logit_softcap <= 0.0:
             raise ValueError(f"logit_softcap must be positive, got {h.logit_softcap}")
         self.tie_embeddings = h.tie_embeddings
@@ -1018,20 +937,18 @@ class GPT(nn.Module):
             for i in range(max(0, h.num_layers - h.xsa_last_n), h.num_layers):
                 self.blocks[i].attn.use_xsa = True
         self.looping_active = False
-        self.base_encoder_indices = list(range(self.num_encoder_layers))
-        self.base_decoder_indices = list(range(self.num_encoder_layers, h.num_layers))
-        self.loop_index_cache = {}
-        max_loop_repeats = max(
-            _depth_to_repeats(h.num_loops + 1),
-            _depth_to_repeats(h.train_loop_max_depth),
-            _depth_to_repeats(h.eval_loop_depth),
-        )
-        for repeats in range(max_loop_repeats + 1):
-            self.loop_index_cache[repeats] = self._build_loop_indices(repeats)
-        self.active_loop_repeats = _depth_to_repeats(h.num_loops + 1)
-        self.encoder_indices, self.decoder_indices = self.loop_index_cache[
-            self.active_loop_repeats
-        ]
+        if h.num_loops > 0:
+            loop_seg = list(range(h.loop_start, h.loop_end + 1))
+            all_indices = list(range(h.loop_start))
+            for _ in range(h.num_loops + 1):
+                all_indices.extend(loop_seg)
+            all_indices.extend(range(h.loop_end + 1, h.num_layers))
+            num_enc = len(all_indices) // 2
+            self.encoder_indices = all_indices[:num_enc]
+            self.decoder_indices = all_indices[num_enc:]
+        else:
+            self.encoder_indices = list(range(self.num_encoder_layers))
+            self.decoder_indices = list(range(self.num_encoder_layers, h.num_layers))
         self.num_skip_weights = min(
             len(self.encoder_indices), len(self.decoder_indices)
         )
@@ -1064,25 +981,6 @@ class GPT(nn.Module):
             self.smear_gate._zero_init = True
             self.smear_lambda = nn.Parameter(torch.zeros(1, dtype=torch.float32))
         self._init_weights()
-
-    def _build_loop_indices(self, repeats):
-        repeats = max(int(repeats), 0)
-        if repeats == 0:
-            return self.base_encoder_indices, self.base_decoder_indices
-        loop_seg = list(range(self.h.loop_start, self.h.loop_end + 1))
-        all_indices = list(range(self.h.loop_start))
-        for _ in range(repeats + 1):
-            all_indices.extend(loop_seg)
-        all_indices.extend(range(self.h.loop_end + 1, self.h.num_layers))
-        num_enc = len(all_indices) // 2
-        return all_indices[:num_enc], all_indices[num_enc:]
-
-    def set_loop_repeats(self, repeats):
-        repeats = max(int(repeats), 0)
-        if repeats not in self.loop_index_cache:
-            self.loop_index_cache[repeats] = self._build_loop_indices(repeats)
-        self.active_loop_repeats = repeats
-        self.encoder_indices, self.decoder_indices = self.loop_index_cache[repeats]
 
     def _init_weights(self):
         if self.tie_embeddings:
@@ -2160,13 +2058,10 @@ def _rebank_state_dict(flat_sd, num_layers, model_dim, kv_dim, hidden_dim):
 
 def _compressed_code_size(code):
     code_raw = code.encode("utf-8")
-    try:
-        minified = subprocess.run(
-            ["pyminify", "--no-rename-locals", "--no-hoist-literals", "--remove-literal-statements", "-"],
-            input=code_raw, capture_output=True, check=True,
-        ).stdout
-    except (FileNotFoundError, subprocess.CalledProcessError):
-        minified = code_raw
+    minified = subprocess.run(
+        ["pyminify", "--no-rename-locals", "--no-hoist-literals", "--remove-literal-statements", "-"],
+        input=code_raw, capture_output=True, check=True,
+    ).stdout
     compressed = lzma.compress(minified)
     encoded = base64.b85encode(compressed)
     wrapper = b'import lzma as L,base64 as B\nexec(L.decompress(B.b85decode("' + encoded + b'")))\n'
@@ -2864,110 +2759,6 @@ def train_model(h, device, val_data):
             f"gptq:reserving {h.gptq_reserve_seconds:.0f}s, effective={max_wallclock_ms:.0f}ms"
         )
 
-    phased_train_loop = bool(h.train_loop_phase_depths)
-    if phased_train_loop:
-        train_loop_depths = list(h.train_loop_phase_depths)
-        train_loop_depth_weights = [1] * len(train_loop_depths)
-        if h.train_loop_phase_fractions:
-            if len(h.train_loop_phase_fractions) != len(train_loop_depths):
-                raise ValueError(
-                    "TRAIN_LOOP_PHASE_FRACTIONS must match TRAIN_LOOP_PHASE_DEPTHS"
-                )
-            total = sum(max(x, 0.0) for x in h.train_loop_phase_fractions)
-            if total <= 0.0:
-                raise ValueError("TRAIN_LOOP_PHASE_FRACTIONS must sum to > 0")
-            phase_weights = [max(x, 0.0) / total for x in h.train_loop_phase_fractions]
-            phase_boundaries = []
-            running = 0.0
-            for w in phase_weights[:-1]:
-                running += w
-                phase_boundaries.append(running)
-        else:
-            phase_weights = None
-            phase_boundaries = []
-    elif h.train_loop_depth_set:
-        train_loop_depths = sorted(set(h.train_loop_depth_set))
-        train_loop_depth_weights = [1] * len(train_loop_depths)
-        phase_weights = None
-        phase_boundaries = []
-    else:
-        train_loop_depths, train_loop_depth_weights = _loop_depth_weights(
-            h.train_loop_min_depth,
-            h.train_loop_max_depth,
-            h.train_loop_depth_dist,
-            _repeats_to_depth(h.num_loops),
-        )
-        phase_weights = None
-        phase_boundaries = []
-    train_loop_enabled = any(depth > 1 for depth in train_loop_depths)
-    eval_loop_repeats = _depth_to_repeats(h.eval_loop_depth)
-    if phased_train_loop:
-        default_prewarm_depths = sorted(
-            {depth for depth in train_loop_depths if depth > 1} | {h.eval_loop_depth}
-        )
-    else:
-        default_prewarm_depths = sorted(
-            {
-                _repeats_to_depth(h.num_loops),
-                h.eval_loop_depth,
-            }
-        )
-    train_loop_prewarm_depths = (
-        sorted(set(h.train_loop_prewarm_depths))
-        if h.train_loop_prewarm_depths
-        else default_prewarm_depths
-    )
-
-    def _set_train_loop_depth(depth):
-        depth = max(int(depth), 1)
-        base_model.looping_active = depth > 1
-        base_model.set_loop_repeats(_depth_to_repeats(depth))
-
-    def _sample_train_loop_depth():
-        if not train_loop_enabled:
-            return 1
-        if len(train_loop_depths) == 1:
-            return train_loop_depths[0]
-        return random.choices(
-            train_loop_depths, weights=train_loop_depth_weights, k=1
-        )[0]
-
-    def _phased_train_loop_depth(frac):
-        if not phased_train_loop or not train_loop_depths:
-            return 1
-        frac = min(max(float(frac), 0.0), 1.0 - 1e-12)
-        if phase_boundaries:
-            idx = 0
-            while idx < len(phase_boundaries) and frac >= phase_boundaries[idx]:
-                idx += 1
-        else:
-            idx = min(int(frac * len(train_loop_depths)), len(train_loop_depths) - 1)
-        return train_loop_depths[idx]
-
-    def _set_eval_loop_depth(model_obj):
-        model_obj.looping_active = h.eval_loop_depth > 1
-        if hasattr(model_obj, "set_loop_repeats"):
-            model_obj.set_loop_repeats(eval_loop_repeats)
-
-    def _run_with_eval_loop_depth(fn, *args, **kwargs):
-        prev_active = base_model.looping_active
-        prev_repeats = getattr(base_model, "active_loop_repeats", 0)
-        _set_eval_loop_depth(base_model)
-        try:
-            return fn(*args, **kwargs)
-        finally:
-            base_model.looping_active = prev_active
-            base_model.set_loop_repeats(prev_repeats)
-
-    log(
-        "loop_depth_schedule:"
-        f" train={train_loop_depths}"
-        f" dist={'phased' if phased_train_loop else h.train_loop_depth_dist}"
-        f" phase_fracs={phase_weights if phased_train_loop else None}"
-        f" prewarm={train_loop_prewarm_depths}"
-        f" eval_depth={h.eval_loop_depth}"
-    )
-
     def training_frac(step, elapsed_ms):
         if max_wallclock_ms is None:
             return step / max(h.iterations, 1)
@@ -2981,8 +2772,6 @@ def train_model(h, device, val_data):
         return 1.0
 
     def step_fn(step, lr_scale):
-        if base_model.looping_active and not phased_train_loop:
-            base_model.set_loop_repeats(_depth_to_repeats(_sample_train_loop_depth()))
         optimizers.zero_grad_all()
         train_loss = torch.zeros((), device=device)
         for micro_step in range(h.grad_accum_steps):
@@ -3045,16 +2834,10 @@ def train_model(h, device, val_data):
                     (wloss / h.grad_accum_steps).backward()
             optimizers.zero_grad_all()
         _run_cu_bucket_warmup()
-        if train_loop_enabled or len(set(train_loop_prewarm_depths)) > 1:
-            seen_train_loop_depths = set()
-            for loop_depth in train_loop_prewarm_depths:
-                if loop_depth in seen_train_loop_depths:
-                    continue
-                seen_train_loop_depths.add(loop_depth)
-                _set_train_loop_depth(loop_depth)
-                _run_cu_bucket_warmup()
-        base_model.looping_active = False
-        base_model.set_loop_repeats(_depth_to_repeats(h.num_loops + 1))
+        if h.num_loops > 0:
+            base_model.looping_active = True
+            _run_cu_bucket_warmup()
+            base_model.looping_active = False
         for warmup_step in range(h.warmup_steps):
             step_fn(warmup_step, 1.0)
             if (
@@ -3063,8 +2846,8 @@ def train_model(h, device, val_data):
                 or warmup_step + 1 == h.warmup_steps
             ):
                 log(f"warmup_step: {warmup_step+1}/{h.warmup_steps}")
-        if train_loop_enabled and not phased_train_loop:
-            _set_train_loop_depth(_repeats_to_depth(h.num_loops))
+        if h.num_loops > 0:
+            base_model.looping_active = True
             log(
                 f"loop_warmup:enabled encoder:{base_model.encoder_indices} decoder:{base_model.decoder_indices}"
             )
@@ -3077,7 +2860,6 @@ def train_model(h, device, val_data):
                 ):
                     log(f"loop_warmup_step: {warmup_step+1}/{h.warmup_steps}")
             base_model.looping_active = False
-            base_model.set_loop_repeats(_depth_to_repeats(h.num_loops + 1))
         base_model.load_state_dict(initial_model_state, strict=True)
         for (opt, state) in zip(optimizers, initial_optimizer_states, strict=True):
             opt.load_state_dict(state)
@@ -3090,7 +2872,6 @@ def train_model(h, device, val_data):
     ema_decay = h.ema_decay
     training_time_ms = 0.0
     stop_after_step = None
-    current_train_loop_depth = 1
     torch.cuda.synchronize()
     t0 = time.perf_counter()
     step = 0
@@ -3106,8 +2887,7 @@ def train_model(h, device, val_data):
         if should_validate:
             torch.cuda.synchronize()
             training_time_ms += 1e3 * (time.perf_counter() - t0)
-            val_loss, val_bpb = _run_with_eval_loop_depth(
-                eval_val,
+            val_loss, val_bpb = eval_val(
                 h, device, val_data, model, compiled_forward_logits
             )
             log(
@@ -3124,28 +2904,14 @@ def train_model(h, device, val_data):
         elapsed_ms = training_time_ms + 1e3 * (time.perf_counter() - t0)
         frac = training_frac(step, elapsed_ms)
         scale = lr_mul(frac)
-        if phased_train_loop:
-            target_train_loop_depth = _phased_train_loop_depth(frac)
-            if target_train_loop_depth != current_train_loop_depth:
-                _set_train_loop_depth(target_train_loop_depth)
-                current_train_loop_depth = target_train_loop_depth
-                log(
-                    f"layer_loop:phase step:{step} frac:{frac:.3f} "
-                    f"depth:{target_train_loop_depth} phases:{train_loop_depths} "
-                    f"eval_depth:{h.eval_loop_depth}"
-                )
-        elif (
-            train_loop_enabled
+        if (
+            h.num_loops > 0
             and not base_model.looping_active
             and frac >= h.enable_looping_at
         ):
             base_model.looping_active = True
-            base_model.set_loop_repeats(
-                _depth_to_repeats(_sample_train_loop_depth())
-            )
             log(
-                f"layer_loop:enabled step:{step} frac:{frac:.3f} "
-                f"train_depths:{train_loop_depths} eval_depth:{h.eval_loop_depth}"
+                f"layer_loop:enabled step:{step} frac:{frac:.3f} encoder:{base_model.encoder_indices} decoder:{base_model.decoder_indices}"
             )
         train_loss = step_fn(step, scale)
         with torch.no_grad():
@@ -3200,9 +2966,6 @@ def train_and_eval(h, device):
         h, device, val_data
     )
     torch._dynamo.reset()
-    if h.eval_loop_depth > 1:
-        base_model.looping_active = True
-        base_model.set_loop_repeats(_depth_to_repeats(h.eval_loop_depth))
     timed_eval(
         "diagnostic pre-quantization post-ema",
         eval_val,
@@ -3216,9 +2979,8 @@ def train_and_eval(h, device):
     if h.distributed:
         dist.barrier()
     eval_model = deserialize(h, device)
-    if h.eval_loop_depth > 1:
+    if h.num_loops > 0:
         eval_model.looping_active = True
-        eval_model.set_loop_repeats(_depth_to_repeats(h.eval_loop_depth))
     compiled_model = torch.compile(eval_model, dynamic=False, fullgraph=True)
     compiled_forward_logits = torch.compile(
         eval_model.forward_logits, dynamic=False, fullgraph=True
@@ -3237,9 +2999,8 @@ def train_and_eval(h, device):
         torch._dynamo.reset()
         torch.cuda.empty_cache()
         ttt_model = deserialize(h, device)
-        if h.eval_loop_depth > 1:
+        if h.num_loops > 0:
             ttt_model.looping_active = True
-            ttt_model.set_loop_repeats(_depth_to_repeats(h.eval_loop_depth))
         for p in ttt_model.parameters():
             p.requires_grad_(False)
 
